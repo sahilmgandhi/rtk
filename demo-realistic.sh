@@ -267,8 +267,8 @@ echo ""
 echo -e "${GREEN}✓ rtk kubectl pods -A${RESET}"
 think
 type_cmd "rtk kubectl pods -A"
-rtk kubectl pods -A 2>&1 | head -12
-show_gain 1200 280
+rtk kubectl pods -A
+show_gain 1200 35
 
 #######################################
 # SUMMARY

@@ -120,53 +120,62 @@ fn kubectl_pods(args: &[String], _verbose: u8) -> Result<()> {
     let output = cmd.output().context("Failed to run kubectl get pods")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    println!("☸️  Kubernetes Pods:");
-
     let lines: Vec<&str> = stdout.lines().collect();
-    if lines.is_empty() {
-        println!("No pods found");
+    if lines.len() <= 1 {
+        println!("☸️  No pods found");
         return Ok(());
-    }
-
-    // Header
-    if let Some(header) = lines.first() {
-        println!("{}", header);
-        println!("{}", "-".repeat(80));
     }
 
     // Count by status
     let mut running = 0;
     let mut pending = 0;
     let mut failed = 0;
-    let mut other = 0;
 
-    for line in lines.iter().skip(1).take(20) {
-        println!("{}", truncate(line, 100));
-
+    // Skip header, process pods
+    for line in lines.iter().skip(1) {
         if line.contains("Running") {
             running += 1;
         } else if line.contains("Pending") {
             pending += 1;
         } else if line.contains("Failed") || line.contains("Error") || line.contains("CrashLoop") {
             failed += 1;
-        } else {
-            other += 1;
         }
     }
 
-    if lines.len() > 21 {
-        println!("... +{} more pods", lines.len() - 21);
-    }
+    let total = lines.len() - 1;
+    print!("☸️  {} pods: ", total);
 
-    println!();
-    println!("📊 Summary: {} running, {} pending, {} failed, {} other", running, pending, failed, other);
+    let mut parts = Vec::new();
+    if running > 0 { parts.push(format!("{} running", running)); }
+    if pending > 0 { parts.push(format!("{} pending", pending)); }
+    if failed > 0 { parts.push(format!("{} failed", failed)); }
+
+    println!("{}", parts.join(", "));
+
+    // Show only non-running pods (problems)
+    let problems: Vec<&str> = lines.iter()
+        .skip(1)
+        .filter(|l| !l.contains("Running"))
+        .copied()
+        .collect();
+
+    if !problems.is_empty() {
+        println!("⚠️  Issues:");
+        for line in problems.iter().take(10) {
+            // Extract just name and status
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 {
+                println!("  {} {} {}", parts[0], parts[1], parts[3]);
+            }
+        }
+    }
 
     Ok(())
 }
 
 fn kubectl_services(args: &[String], _verbose: u8) -> Result<()> {
     let mut cmd = Command::new("kubectl");
-    cmd.args(["get", "services", "-o", "wide"]);
+    cmd.args(["get", "services"]);
 
     for arg in args {
         cmd.arg(arg);
@@ -175,20 +184,26 @@ fn kubectl_services(args: &[String], _verbose: u8) -> Result<()> {
     let output = cmd.output().context("Failed to run kubectl get services")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    println!("☸️  Kubernetes Services:");
+    let lines: Vec<&str> = stdout.lines().collect();
+    if lines.len() <= 1 {
+        println!("☸️  No services found");
+        return Ok(());
+    }
 
-    for (i, line) in stdout.lines().enumerate() {
-        if i == 0 {
-            println!("{}", line);
-            println!("{}", "-".repeat(80));
-        } else if i <= 15 {
-            println!("{}", truncate(line, 100));
+    let total = lines.len() - 1;
+    println!("☸️  {} services:", total);
+
+    // Show compact list: name type cluster-ip port
+    for line in lines.iter().skip(1).take(15) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 5 {
+            // namespace/name or just name, type, cluster-ip, ports
+            println!("  {} {} {} {}", parts[0], parts[1], parts[2], parts[4]);
         }
     }
 
-    let total = stdout.lines().count();
-    if total > 16 {
-        println!("... +{} more services", total - 16);
+    if total > 15 {
+        println!("  ... +{} more", total - 15);
     }
 
     Ok(())
