@@ -245,19 +245,15 @@ enum Commands {
 enum GitCommands {
     /// Condensed diff output
     Diff {
-        #[arg(trailing_var_arg = true)]
+        /// Git arguments (supports all git diff flags like --stat, --cached, etc)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
-        /// Max lines
-        #[arg(short, long)]
-        max_lines: Option<usize>,
     },
     /// One-line commit history
     Log {
-        #[arg(trailing_var_arg = true)]
+        /// Git arguments (supports all git log flags like --oneline, --graph, --all)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
-        /// Number of commits
-        #[arg(short = 'n', long, default_value = "10")]
-        count: usize,
     },
     /// Compact status
     Status,
@@ -361,11 +357,11 @@ fn main() -> Result<()> {
         }
 
         Commands::Git { command } => match command {
-            GitCommands::Diff { args, max_lines } => {
-                git::run(git::GitCommand::Diff, &args, max_lines, cli.verbose)?;
+            GitCommands::Diff { args } => {
+                git::run(git::GitCommand::Diff, &args, None, cli.verbose)?;
             }
-            GitCommands::Log { args, count } => {
-                git::run(git::GitCommand::Log, &args, Some(count), cli.verbose)?;
+            GitCommands::Log { args } => {
+                git::run(git::GitCommand::Log, &args, None, cli.verbose)?;
             }
             GitCommands::Status => {
                 git::run(git::GitCommand::Status, &[], None, cli.verbose)?;
