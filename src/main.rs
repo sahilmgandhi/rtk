@@ -38,6 +38,7 @@ mod pytest_cmd;
 mod read;
 mod ruff_cmd;
 mod runner;
+mod scaffold_cmd;
 mod summary;
 mod tee;
 mod tracking;
@@ -483,6 +484,18 @@ enum Commands {
         /// Minimum occurrences to include in report
         #[arg(long, default_value = "1")]
         min_occurrences: usize,
+    },
+
+    /// Scaffold a new command module with boilerplate
+    Scaffold {
+        /// Tool name (e.g., swift, gcc, jq)
+        tool: String,
+        /// Filter strategy
+        #[arg(short, long, default_value = "plain", value_enum)]
+        strategy: scaffold_cmd::Strategy,
+        /// Print generated code to stdout without writing files
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Execute command without filtering but track usage
@@ -1420,6 +1433,14 @@ fn main() -> Result<()> {
 
         Commands::HookAudit { since } => {
             hook_audit_cmd::run(since, cli.verbose)?;
+        }
+
+        Commands::Scaffold {
+            tool,
+            strategy,
+            dry_run,
+        } => {
+            scaffold_cmd::run(&tool, &strategy, dry_run, cli.verbose)?;
         }
 
         Commands::Proxy { args } => {

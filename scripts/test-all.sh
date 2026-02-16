@@ -413,6 +413,17 @@ else
     skip "golangci-lint not installed"
 fi
 
+# ── 28b. Scaffold ──────────────────────────────────
+
+section "Scaffold"
+
+assert_help    "rtk scaffold"                   rtk scaffold
+assert_ok      "rtk scaffold --dry-run plain"   rtk scaffold testxyz --strategy plain --dry-run
+assert_ok      "rtk scaffold --dry-run json"    rtk scaffold testxyz --strategy json --dry-run
+assert_ok      "rtk scaffold --dry-run regex"   rtk scaffold testxyz --strategy regex --dry-run
+assert_ok      "rtk scaffold --dry-run ndjson"  rtk scaffold testxyz --strategy ndjson --dry-run
+assert_ok      "rtk scaffold --dry-run text"    rtk scaffold testxyz --strategy text --dry-run
+
 # ── 29. Global flags ────────────────────────────────
 
 section "Global flags"
