@@ -700,6 +700,58 @@ cp ~/.claude/settings.json.bak ~/.claude/settings.json
 
 See **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** for more issues and solutions.
 
+## Companion Tools
+
+### Session Summary Hook — Automatic RTK Savings Visibility
+
+RTK tracks savings via `rtk gain`, but you have to run it manually. The **Session Summary hook** displays your RTK token savings automatically at every Claude Code session exit — alongside 14 other analytics sections (duration, tools, files, git diff, cost, cache, etc.).
+
+**How it works:**
+1. A `SessionStart` hook captures an RTK baseline (`rtk gain` snapshot)
+2. A `SessionEnd` hook computes the per-session delta and displays it
+
+**Example output (RTK section):**
+```
+🔧 RTK Savings
+   Commands: 41 (+33 this session)
+   Tokens saved: 25.3K (+12.4K this session, 73%)
+```
+
+**Install:**
+```bash
+# 1. Download hooks
+mkdir -p ~/.claude/hooks
+curl -fsSL https://raw.githubusercontent.com/FlorianBruniaux/claude-code-ultimate-guide/main/examples/hooks/bash/session-summary.sh -o ~/.claude/hooks/session-summary.sh
+curl -fsSL https://raw.githubusercontent.com/FlorianBruniaux/claude-code-ultimate-guide/main/examples/hooks/bash/rtk-baseline.sh -o ~/.claude/hooks/rtk-baseline.sh
+chmod +x ~/.claude/hooks/session-summary.sh ~/.claude/hooks/rtk-baseline.sh
+
+# 2. Add to ~/.claude/settings.json (merge with existing hooks)
+```
+
+Add these entries to your `settings.json`:
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "~/.claude/hooks/rtk-baseline.sh" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "~/.claude/hooks/session-summary.sh", "timeout": 10000 }]
+      }
+    ]
+  }
+}
+```
+
+**Requirements:** `jq` (`brew install jq` / `apt install jq`)
+
+**Configuration:** All 15 sections are toggleable via environment variables or a config CLI. If RTK isn't installed, the savings section is simply hidden.
+
+For full documentation, configuration options, and the config CLI tool, see the [Session Summary hook README](https://github.com/FlorianBruniaux/claude-code-ultimate-guide/blob/main/examples/hooks/README.md#session-summarysh-v3).
+
 ## For Maintainers
 
 ### Security Review Workflow
