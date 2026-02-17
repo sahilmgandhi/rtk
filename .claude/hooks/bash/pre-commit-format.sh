@@ -13,4 +13,12 @@ if cargo clippy --all-targets 2>&1 | grep -q "error:"; then
     exit 1
 fi
 
+# Validate documentation consistency (version, module count, commands)
+if [ -f "scripts/validate-docs.sh" ]; then
+    if ! bash scripts/validate-docs.sh; then
+        echo "❌ Documentation validation failed. Fix before committing."
+        exit 1
+    fi
+fi
+
 echo "✅ Pre-commit checks passed (warnings allowed)"
