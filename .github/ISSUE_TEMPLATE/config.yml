@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/rtk-ai/rtk/blob/master/docs/ADDING_TOOLS.md
+    about: Guide for adding new tool support to RTK
+  - name: Website
+    url: https://www.rtk-ai.app
+    about: RTK project website

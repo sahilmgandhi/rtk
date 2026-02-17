@@ -1,0 +1,65 @@
+name: New Tool Request
+description: Request support for a new CLI tool in RTK
+title: "[tool] Add `rtk <tool>` support"
+labels: ["enhancement", "new-tool"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new tool! RTK reduces token consumption by filtering CLI output.
+        See [docs/ADDING_TOOLS.md](https://github.com/rtk-ai/rtk/blob/master/docs/ADDING_TOOLS.md) if you want to implement it yourself.
+
+  - type: input
+    id: tool-name
+    attributes:
+      label: Tool name
+      description: The CLI command name (e.g., `swift`, `maven`, `dotnet`)
+      placeholder: "swift"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: strategy
+    attributes:
+      label: Output format
+      description: What does the tool's output look like?
+      options:
+        - "Structured text with repeating patterns (file:line: message)"
+        - "JSON output (single object/array)"
+        - "NDJSON / line-by-line JSON streaming"
+        - "Phased text output (header → results → summary)"
+        - "Simple line-based output"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: sample-output
+    attributes:
+      label: Sample output
+      description: Paste a typical output from the tool (raw, unfiltered). This helps estimate token savings.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-output
+    attributes:
+      label: Expected filtered output
+      description: What should RTK keep? What should it strip?
+      placeholder: |
+        Keep: error messages, file paths, summary line
+        Strip: progress bars, ASCII art, verbose success output
+    validations:
+      required: false
+
+  - type: dropdown
+    id: willing-to-contribute
+    attributes:
+      label: Would you like to implement this?
+      options:
+        - "Yes, I can submit a PR"
+        - "I can help test but not implement"
+        - "No, just requesting"
+    validations:
+      required: true

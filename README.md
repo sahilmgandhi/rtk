@@ -800,6 +800,20 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 Contributions welcome! Please open an issue or PR on GitHub.
 
+### Adding a New Tool
+
+RTK ships with a scaffold command that generates 60% of the boilerplate for a new filter:
+
+```bash
+# Preview what will be generated
+rtk scaffold <tool> --strategy <strategy> --dry-run
+
+# Generate src/<tool>_cmd.rs
+rtk scaffold <tool> --strategy <strategy>
+```
+
+Available strategies: `plain`, `regex`, `json`, `ndjson`, `text`. See [`docs/ADDING_TOOLS.md`](docs/ADDING_TOOLS.md) for the full step-by-step guide.
+
 **For external contributors**: Your PR will undergo automated security review (see [SECURITY.md](SECURITY.md)). This protects RTK's shell execution capabilities against injection attacks and supply chain vulnerabilities.
 
 ## Contact

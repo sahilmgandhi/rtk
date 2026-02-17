@@ -1,0 +1,59 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in RTK
+labels: ["bug"]
+body:
+  - type: input
+    id: rtk-version
+    attributes:
+      label: RTK version
+      description: Output of `rtk --version`
+      placeholder: "rtk 0.20.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Command that failed
+      description: The exact RTK command you ran
+      placeholder: "rtk cargo test -- --nocapture"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Paste the actual output or describe the unexpected behavior
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: raw-output
+    attributes:
+      label: Raw command output (without RTK)
+      description: Run the same command without RTK and paste the output. This helps isolate whether the issue is in RTK's filter or the underlying tool.
+      render: shell
+    validations:
+      required: false
