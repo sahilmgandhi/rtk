@@ -181,19 +181,11 @@ enum Commands {
         show_all: bool,
     },
 
-    /// Find files with compact tree output
+    /// Find files with compact tree output (accepts native find flags like -name, -type)
     Find {
-        /// Pattern to search (glob)
-        pattern: String,
-        /// Path to search in
-        #[arg(default_value = ".")]
-        path: String,
-        /// Maximum results to show
-        #[arg(short, long, default_value = "50")]
-        max: usize,
-        /// Filter by type: f (file), d (directory)
-        #[arg(short = 't', long, default_value = "f")]
-        file_type: String,
+        /// All find arguments (supports both RTK and native find syntax)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 
     /// Ultra-condensed diff (only changed lines)
@@ -992,13 +984,8 @@ fn main() -> Result<()> {
             env_cmd::run(filter.as_deref(), show_all, cli.verbose)?;
         }
 
-        Commands::Find {
-            pattern,
-            path,
-            max,
-            file_type,
-        } => {
-            find_cmd::run(&pattern, &path, max, &file_type, cli.verbose)?;
+        Commands::Find { args } => {
+            find_cmd::run_from_args(&args, cli.verbose)?;
         }
 
         Commands::Diff { file1, file2 } => {
