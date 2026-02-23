@@ -1,10 +1,13 @@
+use crate::cc_economics::{WEIGHT_CACHE_CREATE, WEIGHT_CACHE_READ, WEIGHT_OUTPUT};
+use crate::ccusage::{self, Granularity};
 use crate::display_helpers::{format_duration, print_period_table};
+use crate::session_stats::{self, CacheCompoundingSavings};
 use crate::tracking::{DayStats, MonthStats, Tracker, WeekStats};
-use crate::utils::format_tokens;
+use crate::utils::{format_tokens, format_usd};
 use anyhow::{Context, Result};
-use colored::Colorize; // added: terminal colors
+use colored::Colorize;
 use serde::Serialize;
-use std::io::IsTerminal; // added: TTY detection for graceful degradation
+use std::io::IsTerminal;
 
 pub fn run(
     graph: bool,
@@ -39,12 +42,10 @@ pub fn run(
 
     // Default view (summary)
     if !daily && !weekly && !monthly && !all {
-        // added: styled header with bold title
         println!("{}", styled("RTK Token Savings (Global Scope)", true));
         println!("{}", "═".repeat(60));
         println!();
 
-        // added: KPI-style aligned output
         print_kpi("Total commands", summary.total_commands.to_string());
         print_kpi("Input tokens", format_tokens(summary.total_input));
         print_kpi("Output tokens", format_tokens(summary.total_output));
@@ -64,14 +65,12 @@ pub fn run(
                 format_duration(summary.avg_time_ms)
             ),
         );
-        print_efficiency_meter(summary.avg_savings_pct); // added: visual meter
+        print_efficiency_meter(summary.avg_savings_pct);
         println!();
 
         if !summary.by_command.is_empty() {
-            // added: styled section header
             println!("{}", styled("By Command", true));
 
-            // added: dynamic column widths for clean alignment
             let cmd_width = 24usize;
             let impact_width = 10usize;
             let count_width = summary
@@ -128,7 +127,7 @@ pub fn run(
 
             for (idx, (cmd, count, saved, pct, avg_time)) in summary.by_command.iter().enumerate() {
                 let row_idx = format!("{:>2}.", idx + 1);
-                let cmd_cell = style_command_cell(&truncate_for_column(cmd, cmd_width)); // added: colored command
+                let cmd_cell = style_command_cell(&truncate_for_column(cmd, cmd_width));
                 let count_cell = format!("{:>count_width$}", count, count_width = count_width);
                 let saved_cell = format!(
                     "{:>saved_width$}",
@@ -136,13 +135,13 @@ pub fn run(
                     saved_width = saved_width
                 );
                 let pct_plain = format!("{:>6}", format!("{pct:.1}%"));
-                let pct_cell = colorize_pct_cell(*pct, &pct_plain); // added: color-coded percentage
+                let pct_cell = colorize_by_savings(*pct, &pct_plain);
                 let time_cell = format!(
                     "{:>time_width$}",
                     format_duration(*avg_time),
                     time_width = time_width
                 );
-                let impact = mini_bar(*saved, max_saved, impact_width); // added: impact bar
+                let impact = mini_bar(*saved, max_saved, impact_width);
                 println!(
                     "{}  {}  {}  {}  {}  {}  {}",
                     row_idx, cmd_cell, count_cell, saved_cell, pct_cell, time_cell, impact
@@ -152,8 +151,11 @@ pub fn run(
             println!();
         }
 
+        // Cache compounding section
+        print_cache_compounding(summary.total_saved);
+
         if graph && !summary.by_day.is_empty() {
-            println!("{}", styled("Daily Savings (last 30 days)", true)); // added: styled header
+            println!("{}", styled("Daily Savings (last 30 days)", true));
             println!("──────────────────────────────────────────────────────────");
             print_ascii_graph(&summary.by_day);
             println!();
@@ -162,7 +164,7 @@ pub fn run(
         if history {
             let recent = tracker.get_recent(10)?;
             if !recent.is_empty() {
-                println!("{}", styled("Recent Commands", true)); // added: styled header
+                println!("{}", styled("Recent Commands", true));
                 println!("──────────────────────────────────────────────────────────");
                 for rec in recent {
                     let time = rec.timestamp.format("%m-%d %H:%M");
@@ -171,7 +173,6 @@ pub fn run(
                     } else {
                         rec.rtk_cmd.clone()
                     };
-                    // added: tier indicators by savings level
                     let sign = if rec.savings_pct >= 70.0 {
                         "▲"
                     } else if rec.savings_pct >= 30.0 {
@@ -204,9 +205,9 @@ pub fn run(
 
             let quota_pct = (summary.total_saved as f64 / quota_tokens as f64) * 100.0;
 
-            println!("{}", styled("Monthly Quota Analysis", true)); // added: styled header
+            println!("{}", styled("Monthly Quota Analysis", true));
             println!("──────────────────────────────────────────────────────────");
-            print_kpi("Subscription tier", tier_name.to_string()); // added: KPI style
+            print_kpi("Subscription tier", tier_name.to_string());
             print_kpi("Estimated monthly quota", format_tokens(quota_tokens));
             print_kpi(
                 "Tokens saved (lifetime)",
@@ -237,9 +238,8 @@ pub fn run(
     Ok(())
 }
 
-// ── Display helpers (TTY-aware) ── // added: entire section
+// ── Display helpers (TTY-aware) ──
 
-/// Format text with bold styling (TTY-aware). // added
 fn styled(text: &str, strong: bool) -> String {
     if !std::io::stdout().is_terminal() {
         return text.to_string();
@@ -251,26 +251,23 @@ fn styled(text: &str, strong: bool) -> String {
     }
 }
 
-/// Print a key-value pair in KPI layout. // added
 fn print_kpi(label: &str, value: String) {
     println!("{:<18} {}", format!("{label}:"), value);
 }
 
-/// Colorize percentage based on savings tier (TTY-aware). // added
-fn colorize_pct_cell(pct: f64, padded: &str) -> String {
+fn colorize_by_savings(pct: f64, text: &str) -> String {
     if !std::io::stdout().is_terminal() {
-        return padded.to_string();
+        return text.to_string();
     }
     if pct >= 70.0 {
-        padded.green().bold().to_string()
+        text.green().bold().to_string()
     } else if pct >= 40.0 {
-        padded.yellow().bold().to_string()
+        text.yellow().bold().to_string()
     } else {
-        padded.red().bold().to_string()
+        text.red().bold().to_string()
     }
 }
 
-/// Truncate text to fit column width with ellipsis. // added
 fn truncate_for_column(text: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
@@ -287,7 +284,6 @@ fn truncate_for_column(text: &str, width: usize) -> String {
     out
 }
 
-/// Style command names with cyan+bold (TTY-aware). // added
 fn style_command_cell(cmd: &str) -> String {
     if !std::io::stdout().is_terminal() {
         return cmd.to_string();
@@ -295,7 +291,6 @@ fn style_command_cell(cmd: &str) -> String {
     cmd.bright_cyan().bold().to_string()
 }
 
-/// Render a proportional bar chart segment (TTY-aware). // added
 fn mini_bar(value: usize, max: usize, width: usize) -> String {
     if max == 0 || width == 0 {
         return String::new();
@@ -311,24 +306,101 @@ fn mini_bar(value: usize, max: usize, width: usize) -> String {
     }
 }
 
-/// Print an efficiency meter with colored progress bar (TTY-aware). // added
 fn print_efficiency_meter(pct: f64) {
     let width = 24usize;
     let filled = (((pct / 100.0) * width as f64).round() as usize).min(width);
     let meter = format!("{}{}", "█".repeat(filled), "░".repeat(width - filled));
+    let pct_str = format!("{pct:.1}%");
     if std::io::stdout().is_terminal() {
-        let pct_str = format!("{pct:.1}%");
-        let colored_pct = if pct >= 70.0 {
-            pct_str.green().bold().to_string()
-        } else if pct >= 40.0 {
-            pct_str.yellow().bold().to_string()
-        } else {
-            pct_str.red().bold().to_string()
-        };
-        println!("Efficiency meter: {} {}", meter.green(), colored_pct);
+        println!(
+            "Efficiency meter: {} {}",
+            meter.green(),
+            colorize_by_savings(pct, &pct_str)
+        );
     } else {
-        println!("Efficiency meter: {} {:.1}%", meter, pct);
+        println!("Efficiency meter: {} {}", meter, pct_str);
     }
+}
+
+fn get_weighted_input_cpt() -> Option<f64> {
+    let cc_monthly = ccusage::fetch(Granularity::Monthly).ok()??;
+    let mut total_cost = 0.0f64;
+    let mut weighted_units = 0.0f64;
+    for period in &cc_monthly {
+        total_cost += period.metrics.total_cost;
+        weighted_units += period.metrics.input_tokens as f64
+            + WEIGHT_OUTPUT * period.metrics.output_tokens as f64
+            + WEIGHT_CACHE_CREATE * period.metrics.cache_creation_tokens as f64
+            + WEIGHT_CACHE_READ * period.metrics.cache_read_tokens as f64;
+    }
+    if weighted_units > 0.0 {
+        Some(total_cost / weighted_units)
+    } else {
+        None
+    }
+}
+
+fn compute_cache_compounding(total_saved: usize) -> Option<CacheCompoundingSavings> {
+    let stats = session_stats::compute_session_stats(90).ok()?;
+    let cpt = get_weighted_input_cpt();
+    Some(session_stats::compute_compounding(total_saved, stats, cpt))
+}
+
+fn print_cache_compounding(total_saved: usize) {
+    let compounding = match compute_cache_compounding(total_saved) {
+        Some(c) => c,
+        None => return,
+    };
+
+    println!("{}", styled("Cache Compounding Effect", true));
+    println!("──────────────────────────────────────────────────────────────");
+
+    print_kpi("Direct savings", format_tokens(compounding.direct_saved));
+
+    let turns_label = if compounding.stats.is_estimated {
+        format!(
+            "~{:.0} (model estimate)",
+            compounding.stats.avg_turns_per_session
+        )
+    } else {
+        format!(
+            "{:.0} (from {} sessions)",
+            compounding.stats.avg_turns_per_session, compounding.stats.sessions_analyzed
+        )
+    };
+    print_kpi("Avg session turns", turns_label);
+    print_kpi(
+        "Avg remaining",
+        format!("{:.0}", compounding.stats.avg_remaining_turns),
+    );
+    print_kpi(
+        "Cache multiplier",
+        format!(
+            "{:.2}x  (1.25 + 0.1 x {:.0})",
+            compounding.multiplier, compounding.stats.avg_remaining_turns
+        ),
+    );
+
+    let effective_str = match compounding.dollar_savings {
+        Some(dollars) => format!(
+            "{} tokens  ({})",
+            format_tokens(compounding.effective_saved),
+            format_usd(dollars)
+        ),
+        None => format!("{} tokens", format_tokens(compounding.effective_saved)),
+    };
+
+    println!("  ┌─────────────────────────────────────────────────────────┐");
+    println!("  │ Effective savings:   {:<35}│", effective_str);
+    println!("  └─────────────────────────────────────────────────────────┘");
+
+    println!("How: Saved tokens avoid 1.25x cache write + 0.1x per");
+    println!("subsequent turn. Longer sessions = bigger multiplier.");
+
+    if compounding.dollar_savings.is_none() {
+        println!("Tip: Install ccusage (npm i -g ccusage) for dollar amounts.");
+    }
+    println!();
 }
 
 fn print_ascii_graph(data: &[(String, usize)]) {
@@ -383,6 +455,8 @@ fn print_monthly(tracker: &Tracker) -> Result<()> {
 struct ExportData {
     summary: ExportSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
+    cache_compounding: Option<CacheCompoundingSavings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     daily: Option<Vec<DayStats>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     weekly: Option<Vec<WeekStats>>,
@@ -422,6 +496,7 @@ fn export_json(
             total_time_ms: summary.total_time_ms,
             avg_time_ms: summary.avg_time_ms,
         },
+        cache_compounding: compute_cache_compounding(summary.total_saved),
         daily: if all || daily {
             Some(tracker.get_all_days()?)
         } else {

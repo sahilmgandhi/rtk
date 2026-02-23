@@ -38,6 +38,7 @@ mod pytest_cmd;
 mod read;
 mod ruff_cmd;
 mod runner;
+mod session_stats;
 mod summary;
 mod tee;
 mod tracking;

@@ -91,24 +91,42 @@ fn binary_exists() -> bool {
         .unwrap_or(false)
 }
 
-/// Build the ccusage command, falling back to npx if binary not in PATH
+/// Build the ccusage command, falling back to npx/pnpx if binary not in PATH.
+/// Tries: ccusage (direct) → npx → pnpx → pnpm dlx
 fn build_command() -> Option<Command> {
     if binary_exists() {
         return Some(Command::new("ccusage"));
     }
 
-    // Fallback: try npx
-    let npx_check = Command::new("npx")
-        .arg("ccusage")
-        .arg("--help")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    // Try package runner fallbacks (stdin null prevents interactive prompts)
+    let runners: &[&[&str]] = &[
+        &["npx", "ccusage"],
+        &["pnpx", "ccusage"],
+        &["pnpm", "dlx", "ccusage"],
+    ];
 
-    if npx_check.map(|s| s.success()).unwrap_or(false) {
-        let mut cmd = Command::new("npx");
-        cmd.arg("ccusage");
-        return Some(cmd);
+    for runner in runners {
+        let (bin, args) = runner.split_first()?;
+        let mut check = Command::new(bin);
+        for arg in args {
+            check.arg(arg);
+        }
+        let ok = check
+            .arg("--help")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if ok {
+            let mut cmd = Command::new(bin);
+            for arg in args {
+                cmd.arg(arg);
+            }
+            return Some(cmd);
+        }
     }
 
     None
