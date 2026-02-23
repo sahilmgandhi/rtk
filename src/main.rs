@@ -444,7 +444,7 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// Discover missed RTK savings from Claude Code history
+    /// Discover missed RTK savings from AI coding tool history
     Discover {
         /// Filter by project path (substring match)
         #[arg(short, long)]
@@ -461,9 +461,12 @@ enum Commands {
         /// Output format: text, json
         #[arg(short, long, default_value = "text")]
         format: String,
+        /// Filter by AI tool: claude, codex, cline, cursor (default: all)
+        #[arg(short = 't', long)]
+        tool: Option<String>,
     },
 
-    /// Learn CLI corrections from Claude Code error history
+    /// Learn CLI corrections from AI coding tool error history
     Learn {
         /// Filter by project path (substring match)
         #[arg(short, long)]
@@ -486,6 +489,9 @@ enum Commands {
         /// Minimum occurrences to include in report
         #[arg(long, default_value = "1")]
         min_occurrences: usize,
+        /// Filter by AI tool: claude, codex, cline, cursor (default: all)
+        #[arg(short = 't', long)]
+        tool: Option<String>,
     },
 
     /// Execute command without filtering but track usage
@@ -1294,8 +1300,17 @@ fn main() -> Result<()> {
             all,
             since,
             format,
+            tool,
         } => {
-            discover::run(project.as_deref(), all, since, limit, &format, cli.verbose)?;
+            discover::run(
+                project.as_deref(),
+                all,
+                since,
+                limit,
+                &format,
+                cli.verbose,
+                tool.as_deref(),
+            )?;
         }
 
         Commands::Learn {
@@ -1306,6 +1321,7 @@ fn main() -> Result<()> {
             write_rules,
             min_confidence,
             min_occurrences,
+            tool,
         } => {
             learn::run(
                 project,
@@ -1315,6 +1331,7 @@ fn main() -> Result<()> {
                 write_rules,
                 min_confidence,
                 min_occurrences,
+                tool,
             )?;
         }
 

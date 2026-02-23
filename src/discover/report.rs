@@ -51,6 +51,7 @@ pub struct DiscoverReport {
     pub supported: Vec<SupportedEntry>,
     pub unsupported: Vec<UnsupportedEntry>,
     pub parse_errors: usize,
+    pub tools_scanned: Vec<String>,
 }
 
 impl DiscoverReport {
@@ -73,8 +74,11 @@ pub fn format_text(report: &DiscoverReport, limit: usize, verbose: bool) -> Stri
     out.push_str("RTK Discover -- Savings Opportunities\n");
     out.push_str(&"=".repeat(52));
     out.push('\n');
+    if !report.tools_scanned.is_empty() {
+        out.push_str(&format!("Tools: {}\n", report.tools_scanned.join(", ")));
+    }
     out.push_str(&format!(
-        "Scanned: {} sessions (last {} days), {} Bash commands\n",
+        "Scanned: {} sessions (last {} days), {} shell commands\n",
         report.sessions_scanned, report.since_days, report.total_commands
     ));
     out.push_str(&format!(

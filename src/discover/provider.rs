@@ -1,10 +1,44 @@
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use walkdir::WalkDir;
+
+const SECONDS_PER_DAY: u64 = 86_400;
+/// Max chars to keep from tool output for error detection.
+pub const OUTPUT_PREVIEW_CHARS: usize = 1000;
+
+/// Which AI coding tool a session came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum ToolSource {
+    ClaudeCode,
+    CodexCli,
+    Cline,
+    Cursor,
+}
+
+impl ToolSource {
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            ToolSource::ClaudeCode => "claude",
+            ToolSource::CodexCli => "codex",
+            ToolSource::Cline => "cline",
+            ToolSource::Cursor => "cursor",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ToolSource::ClaudeCode => "Claude Code",
+            ToolSource::CodexCli => "Codex CLI",
+            ToolSource::Cline => "Cline",
+            ToolSource::Cursor => "Cursor",
+        }
+    }
+}
 
 /// A command extracted from a session file.
 #[derive(Debug)]
@@ -21,14 +55,85 @@ pub struct ExtractedCommand {
     pub sequence_index: usize,
 }
 
-/// Trait for session providers (Claude Code, future: Cursor, Windsurf).
+/// Trait for session providers (Claude Code, Codex CLI, Cline, Cursor).
 pub trait SessionProvider {
+    fn tool_source(&self) -> ToolSource;
     fn discover_sessions(
         &self,
         project_filter: Option<&str>,
         since_days: Option<u64>,
     ) -> Result<Vec<PathBuf>>;
     fn extract_commands(&self, path: &Path) -> Result<Vec<ExtractedCommand>>;
+}
+
+/// Compute a mtime cutoff from a number of days ago.
+pub fn cutoff_from_days(since_days: Option<u64>) -> Option<SystemTime> {
+    since_days.map(|days| {
+        SystemTime::now()
+            .checked_sub(Duration::from_secs(days * SECONDS_PER_DAY))
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    })
+}
+
+/// Check if a file's mtime is after the cutoff.
+pub fn is_recent(path: &Path, cutoff: Option<SystemTime>) -> bool {
+    let Some(cutoff_time) = cutoff else {
+        return true;
+    };
+    match fs::metadata(path).and_then(|m| m.modified()) {
+        Ok(mtime) => mtime >= cutoff_time,
+        Err(_) => false,
+    }
+}
+
+/// Join collected tool_use entries with their tool_result responses by ID.
+pub fn join_tool_uses_with_results(
+    tool_uses: Vec<(String, String, usize)>,
+    tool_results: &HashMap<String, (usize, String, bool)>,
+    session_id: &str,
+) -> Vec<ExtractedCommand> {
+    tool_uses
+        .into_iter()
+        .map(|(tool_id, command, sequence_index)| {
+            let (output_len, output_content, is_error) = tool_results
+                .get(&tool_id)
+                .map(|(len, content, err)| (Some(*len), Some(content.clone()), *err))
+                .unwrap_or((None, None, false));
+
+            ExtractedCommand {
+                command,
+                output_len,
+                session_id: session_id.to_string(),
+                output_content,
+                is_error,
+                sequence_index,
+            }
+        })
+        .collect()
+}
+
+pub const VALID_TOOL_NAMES: &[&str] = &["claude", "codex", "cline", "cursor"];
+
+/// Build the list of session providers, optionally filtered by tool short name.
+pub fn build_providers(tool_filter: Option<&str>) -> Vec<Box<dyn SessionProvider>> {
+    use super::cline_provider::ClineProvider;
+    use super::codex_provider::CodexProvider;
+    use super::cursor_provider::CursorProvider;
+
+    let all: Vec<Box<dyn SessionProvider>> = vec![
+        Box::new(ClaudeProvider),
+        Box::new(CodexProvider),
+        Box::new(ClineProvider),
+        Box::new(CursorProvider),
+    ];
+
+    match tool_filter {
+        Some(filter) => all
+            .into_iter()
+            .filter(|p| p.tool_source().short_name() == filter)
+            .collect(),
+        None => all,
+    }
 }
 
 pub struct ClaudeProvider;
@@ -55,21 +160,23 @@ impl ClaudeProvider {
 }
 
 impl SessionProvider for ClaudeProvider {
+    fn tool_source(&self) -> ToolSource {
+        ToolSource::ClaudeCode
+    }
+
     fn discover_sessions(
         &self,
         project_filter: Option<&str>,
         since_days: Option<u64>,
     ) -> Result<Vec<PathBuf>> {
         let projects_dir = Self::projects_dir()?;
-        let cutoff = since_days.map(|days| {
-            SystemTime::now()
-                .checked_sub(Duration::from_secs(days * 86400))
-                .unwrap_or(SystemTime::UNIX_EPOCH)
-        });
+        let cutoff = cutoff_from_days(since_days);
+
+        // For Claude, encode the project filter to match directory name format
+        let encoded_filter = project_filter.map(|f| Self::encode_project_path(f));
 
         let mut sessions = Vec::new();
 
-        // List project directories
         let entries = fs::read_dir(&projects_dir)
             .with_context(|| format!("failed to read {}", projects_dir.display()))?;
 
@@ -79,10 +186,9 @@ impl SessionProvider for ClaudeProvider {
                 continue;
             }
 
-            // Apply project filter: substring match on directory name
-            if let Some(filter) = project_filter {
+            if let Some(ref filter) = encoded_filter {
                 let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if !dir_name.contains(filter) {
+                if !dir_name.contains(filter.as_str()) {
                     continue;
                 }
             }
@@ -98,15 +204,8 @@ impl SessionProvider for ClaudeProvider {
                     continue;
                 }
 
-                // Apply mtime filter
-                if let Some(cutoff_time) = cutoff {
-                    if let Ok(meta) = fs::metadata(file_path) {
-                        if let Ok(mtime) = meta.modified() {
-                            if mtime < cutoff_time {
-                                continue;
-                            }
-                        }
-                    }
+                if !is_recent(file_path, cutoff) {
+                    continue;
                 }
 
                 sessions.push(file_path.to_path_buf());
@@ -127,11 +226,8 @@ impl SessionProvider for ClaudeProvider {
             .unwrap_or("unknown")
             .to_string();
 
-        // First pass: collect all tool_use Bash commands with their IDs and sequence
-        // Second pass (same loop): collect tool_result output lengths, content, and error status
-        let mut pending_tool_uses: Vec<(String, String, usize)> = Vec::new(); // (tool_use_id, command, sequence)
-        let mut tool_results: HashMap<String, (usize, String, bool)> = HashMap::new(); // (len, content, is_error)
-        let mut commands = Vec::new();
+        let mut pending_tool_uses: Vec<(String, String, usize)> = Vec::new();
+        let mut tool_results: HashMap<String, (usize, String, bool)> = HashMap::new();
         let mut sequence_counter = 0;
 
         for line in reader.lines() {
@@ -186,19 +282,15 @@ impl SessionProvider for ClaudeProvider {
                             if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
                                 if let Some(id) = block.get("tool_use_id").and_then(|i| i.as_str())
                                 {
-                                    // Get content, length, and error status
                                     let content =
                                         block.get("content").and_then(|c| c.as_str()).unwrap_or("");
-
                                     let output_len = content.len();
                                     let is_error = block
                                         .get("is_error")
                                         .and_then(|e| e.as_bool())
                                         .unwrap_or(false);
-
-                                    // Store first ~1000 chars of content for error detection
                                     let content_preview: String =
-                                        content.chars().take(1000).collect();
+                                        content.chars().take(OUTPUT_PREVIEW_CHARS).collect();
 
                                     tool_results.insert(
                                         id.to_string(),
@@ -213,24 +305,11 @@ impl SessionProvider for ClaudeProvider {
             }
         }
 
-        // Match tool_uses with their results
-        for (tool_id, command, sequence_index) in pending_tool_uses {
-            let (output_len, output_content, is_error) = tool_results
-                .get(&tool_id)
-                .map(|(len, content, err)| (Some(*len), Some(content.clone()), *err))
-                .unwrap_or((None, None, false));
-
-            commands.push(ExtractedCommand {
-                command,
-                output_len,
-                session_id: session_id.clone(),
-                output_content,
-                is_error,
-                sequence_index,
-            });
-        }
-
-        Ok(commands)
+        Ok(join_tool_uses_with_results(
+            pending_tool_uses,
+            &tool_results,
+            &session_id,
+        ))
     }
 }
 
@@ -347,7 +426,7 @@ mod tests {
         let cmds = provider.extract_commands(jsonl.path()).unwrap();
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].command, "git commit --ammend");
-        assert_eq!(cmds[0].is_error, true);
+        assert!(cmds[0].is_error);
         assert!(cmds[0].output_content.is_some());
         assert_eq!(
             cmds[0].output_content.as_ref().unwrap(),
@@ -365,7 +444,7 @@ mod tests {
         let provider = ClaudeProvider;
         let cmds = provider.extract_commands(jsonl.path()).unwrap();
         assert_eq!(cmds.len(), 2);
-        assert_eq!(cmds[0].is_error, false);
+        assert!(!cmds[0].is_error);
         assert_eq!(cmds[1].is_error, true);
     }
 
@@ -384,5 +463,46 @@ mod tests {
         assert_eq!(cmds[0].command, "first");
         assert_eq!(cmds[1].command, "second");
         assert_eq!(cmds[2].command, "third");
+    }
+
+    #[test]
+    fn test_tool_source_short_names() {
+        assert_eq!(ToolSource::ClaudeCode.short_name(), "claude");
+        assert_eq!(ToolSource::CodexCli.short_name(), "codex");
+        assert_eq!(ToolSource::Cline.short_name(), "cline");
+        assert_eq!(ToolSource::Cursor.short_name(), "cursor");
+    }
+
+    #[test]
+    fn test_tool_source_display_names() {
+        assert_eq!(ToolSource::ClaudeCode.display_name(), "Claude Code");
+        assert_eq!(ToolSource::CodexCli.display_name(), "Codex CLI");
+        assert_eq!(ToolSource::Cline.display_name(), "Cline");
+        assert_eq!(ToolSource::Cursor.display_name(), "Cursor");
+    }
+
+    #[test]
+    fn test_build_providers_all() {
+        let providers = build_providers(None);
+        assert_eq!(providers.len(), 4);
+    }
+
+    #[test]
+    fn test_build_providers_filtered() {
+        let providers = build_providers(Some("claude"));
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].tool_source(), ToolSource::ClaudeCode);
+    }
+
+    #[test]
+    fn test_build_providers_unknown_filter() {
+        let providers = build_providers(Some("unknown"));
+        assert_eq!(providers.len(), 0);
+    }
+
+    #[test]
+    fn test_claude_provider_tool_source() {
+        let provider = ClaudeProvider;
+        assert_eq!(provider.tool_source(), ToolSource::ClaudeCode);
     }
 }

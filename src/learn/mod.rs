@@ -1,7 +1,7 @@
 pub mod detector;
 pub mod report;
 
-use crate::discover::provider::{ClaudeProvider, SessionProvider};
+use crate::discover::provider::{build_providers, VALID_TOOL_NAMES};
 use anyhow::Result;
 use detector::{deduplicate_corrections, find_corrections, CommandExecution};
 use report::{format_console_report, write_rules_file};
@@ -14,49 +14,61 @@ pub fn run(
     write_rules: bool,
     min_confidence: f64,
     min_occurrences: usize,
+    tool: Option<String>,
 ) -> Result<()> {
-    let provider = ClaudeProvider;
+    if let Some(ref t) = tool {
+        if !VALID_TOOL_NAMES.contains(&t.as_str()) {
+            anyhow::bail!(
+                "Unknown tool '{}'. Valid options: {}",
+                t,
+                VALID_TOOL_NAMES.join(", ")
+            );
+        }
+    }
 
-    // Determine project filter (same logic as discover)
+    let providers = build_providers(tool.as_deref());
+
     let project_filter = if all {
         None
     } else if let Some(p) = project {
         Some(p)
     } else {
-        // Default: current working directory
         let cwd = std::env::current_dir()?;
-        let cwd_str = cwd.to_string_lossy().to_string();
-        let encoded = ClaudeProvider::encode_project_path(&cwd_str);
-        Some(encoded)
+        Some(cwd.to_string_lossy().to_string())
     };
 
-    // Discover sessions
-    let sessions = provider.discover_sessions(project_filter.as_deref(), Some(since))?;
-
-    if sessions.is_empty() {
-        println!("No Claude Code sessions found in the last {} days.", since);
-        return Ok(());
-    }
-
-    // Extract commands from all sessions
+    let mut total_sessions: usize = 0;
     let mut all_commands: Vec<CommandExecution> = Vec::new();
 
-    for session_path in &sessions {
-        let extracted = match provider.extract_commands(session_path) {
-            Ok(cmds) => cmds,
-            Err(_) => continue, // Skip malformed sessions
+    for provider in &providers {
+        let sessions = match provider.discover_sessions(project_filter.as_deref(), Some(since)) {
+            Ok(s) => s,
+            Err(_) => continue,
         };
 
-        for ext_cmd in extracted {
-            // Only process commands with output content
-            if let Some(output) = ext_cmd.output_content {
-                all_commands.push(CommandExecution {
-                    command: ext_cmd.command,
-                    is_error: ext_cmd.is_error,
-                    output,
-                });
+        total_sessions += sessions.len();
+
+        for session_path in &sessions {
+            let extracted = match provider.extract_commands(session_path) {
+                Ok(cmds) => cmds,
+                Err(_) => continue,
+            };
+
+            for ext_cmd in extracted {
+                if let Some(output) = ext_cmd.output_content {
+                    all_commands.push(CommandExecution {
+                        command: ext_cmd.command,
+                        is_error: ext_cmd.is_error,
+                        output,
+                    });
+                }
             }
         }
+    }
+
+    if total_sessions == 0 {
+        println!("No AI coding sessions found in the last {} days.", since);
+        return Ok(());
     }
 
     // Sort by sequence index to maintain chronological order
@@ -68,7 +80,7 @@ pub fn run(
     if corrections.is_empty() {
         println!(
             "No CLI corrections detected in {} sessions.",
-            sessions.len()
+            total_sessions
         );
         return Ok(());
     }
@@ -90,7 +102,7 @@ pub fn run(
         "json" => {
             // JSON output
             let json = serde_json::json!({
-                "sessions_scanned": sessions.len(),
+                "sessions_scanned": total_sessions,
                 "total_corrections": filtered.len(),
                 "rules": rules.iter().map(|r| serde_json::json!({
                     "wrong": r.wrong_pattern,
@@ -104,7 +116,7 @@ pub fn run(
         }
         _ => {
             // Text output
-            let report = format_console_report(&rules, filtered.len(), sessions.len(), since);
+            let report = format_console_report(&rules, filtered.len(), total_sessions, since);
             print!("{}", report);
 
             if write_rules && !rules.is_empty() {
